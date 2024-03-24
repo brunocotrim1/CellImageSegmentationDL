@@ -109,3 +109,54 @@ def remove_boundary_cells(mask):
         mask[mask==i] = 0
     new_label,_,_ = segmentation.relabel_sequential(mask)
     return new_label
+
+def challange_evaluation(gt,seg):
+         # Score the cases
+        # do not consider cells on the boundaries during evaluation
+        if np.prod(gt.shape)<25000000:
+            gt = remove_boundary_cells(gt.astype(np.int32)) 
+            seg = remove_boundary_cells(seg.astype(np.int32))           
+            tp, fp, fn = eval_tp_fp_fn(gt, seg, threshold=0.5)
+        else: # for large images (>5000x5000), the F1 score is computed by a patch-based way
+            H, W = gt.shape
+            roi_size = 2000
+        
+            if H % roi_size != 0:
+                n_H = H // roi_size + 1
+                new_H = roi_size * n_H
+            else:
+                n_H = H // roi_size
+                new_H = H
+        
+            if W % roi_size != 0:
+                n_W = W // roi_size + 1
+                new_W = roi_size * n_W    
+            else:
+                n_W = W // roi_size
+                new_W = W    
+        
+            gt_pad = np.zeros((new_H, new_W), dtype=gt.dtype)
+            seg_pad = np.zeros((new_H, new_W), dtype=gt.dtype)
+            gt_pad[:H, :W] = gt
+            seg_pad[:H, :W] = seg
+              
+            tp = 0
+            fp = 0
+            fn = 0
+            for i in range(n_H):
+                for j in range(n_W):
+                    gt_roi  = remove_boundary_cells(gt_pad[roi_size*i:roi_size*(i+1), roi_size*j:roi_size*(j+1)])
+                    seg_roi = remove_boundary_cells(seg_pad[roi_size*i:roi_size*(i+1), roi_size*j:roi_size*(j+1)])
+                    tp_i, fp_i, fn_i = eval_tp_fp_fn(gt_roi, seg_roi, threshold=0.5)
+                    tp += tp_i
+                    fp += fp_i
+                    fn += fn_i            
+        
+        if tp == 0:
+            precision = 0
+            recall = 0
+            f1 = 0
+        else:
+            precision = tp / (tp + fp)
+            recall = tp / (tp + fn)
+            f1 = 2*(precision * recall)/ (precision + recall)

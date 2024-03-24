@@ -9,6 +9,16 @@ import os
 from matplotlib.colors import ListedColormap
 from matplotlib.colors import ListedColormap
 from sklearn.metrics import precision_recall_fscore_support, jaccard_score
+import argparse
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+from collections import OrderedDict
+import pandas as pd
+from skimage import segmentation
+import tifffile as tif
+import os
+join = os.path.join
+from tqdm import tqdm
 # Define custom colormap
 custom_colors = [(0, 0, 0),  # Background (black)
                  (0, 0, 1),  # Inside of cells (blue)
@@ -36,9 +46,25 @@ def calculate_metrics(predicted, labels):
 
     # Calculate intersection over union (IoU)
     iou = jaccard_score(labels_flat, predicted_flat, average='weighted')
-    dice = dice_coefficient(predicted_flat, labels_flat)
+    dice = dice_coefficient(predicted_flat.numpy(), labels_flat.numpy())
 
     return precision, recall, f1_score, iou, dice
+def calculate_accuracy(mask_pred, mask_true):
+    # Flatten masks to 1D arrays
+    pred_flat = mask_pred.flatten()
+    true_flat = mask_true.flatten()
+    
+    # Count total pixels
+    total_pixels = len(pred_flat)
+    
+    # Count correctly classified pixels
+    correct_pixels = np.sum(pred_flat == true_flat)
+    
+    # Calculate accuracy
+    accuracy = correct_pixels / total_pixels
+    
+    return accuracy
+
 
 def predict(model, truth):
     model.eval()
@@ -55,7 +81,8 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
     precision_acc  = []
     iou_acc  = []
     pixel_acc_acc  = []
-
+    challenge_evaluation_acc = []
+    dice_acc = []
     for batch_idx,(images, labels) in enumerate(loader):
         #print(f"Predicting Batch ")
         images = images.to(device)  # Move images to GPU
@@ -64,44 +91,54 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
             plot_results(images, labels, predicted, save_dir, batch_idx)
         for i in range(len(predicted)):
             if simple: 
-                iou = jaccard_score(labels[i].flatten(), predicted[i].flatten(), average='weighted')
-                iou_acc.append(iou)
+                predicted_flat = predicted.flatten()
+                labels_flat = labels.flatten()
+
+                # Calculate precision, recall, F1-score, and support
+                _, _, f1_score, _ = precision_recall_fscore_support(labels_flat, predicted_flat, average='weighted')
+                f1_score_acc.append(f1_score)
             else:
-                precision, recall, f1_score, iou = calculate_metrics(predicted[i], labels[i])
+                precision, recall, f1_score, iou, dice = calculate_metrics(predicted[i], labels[i])
                 f1_score_acc.append(f1_score)
                 recall_acc.append(recall)
                 precision_acc.append(precision)
+                dice_acc.append(dice)
                 iou_acc.append(iou)
+                pixel_acc_acc.append(calculate_accuracy(predicted[i].numpy(), labels[i].numpy()))
     if simple:
-        return {'iou': np.mean(iou_acc)}
+        return {'f1_score': np.mean(f1_score_acc)}
     else:
-        return {'iou': np.mean(iou_acc), 'pixel_accuracy': np.mean(pixel_acc_acc), 
-                'precision': np.mean(precision_acc), 'recall': np.mean(recall_acc), 
-                'f1_score': np.mean(f1_score_acc)}
+        return {'iou': "{:.4f}".format(np.mean(iou_acc)),
+                       'dice': "{:.4f}".format(np.mean(dice_acc)),
+                       'pixel_accuracy': "{:.4f}".format(np.mean(pixel_acc_acc)),
+                       'precision': "{:.4f}".format(np.mean(precision_acc)),
+                       'recall': "{:.4f}".format(np.mean(recall_acc)),
+                       'f1_score': "{:.4f}".format(np.mean(f1_score_acc))}
 
 def plot_results(images, labels, predicted, save_dir, batch_idx):
         for i in range(len(predicted)):
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
             
             # Plot original image
-            axes[0].imshow(np.transpose(images[i].cpu().numpy(), (1, 2, 0)))
+            axes[0].imshow(np.clip(np.transpose(images[i].cpu().numpy(), (1, 2, 0)),0,1))
             axes[0].set_title('Original Image')
             axes[0].axis('off')
             
             # Plot ground truth mask
-            axes[1].imshow(labels[i], cmap='gray')
+            axes[1].imshow(np.clip(labels[i],0,1), cmap='gray')
             axes[1].set_title('Ground Truth Mask')
             axes[1].axis('off')
             
             # Plot predicted mask with custom colormap
-            axes[2].imshow(np.transpose(images[i].cpu().numpy(), (1, 2, 0)))
-            axes[2].imshow(predicted[i], cmap=custom_cmap, alpha=0.7)
+            axes[2].imshow(np.clip(np.transpose(images[i].cpu().numpy(), (1, 2, 0)),0,1))
+            axes[2].imshow(np.clip(predicted[i],0,1), cmap=custom_cmap, alpha=0.7)
             axes[2].set_title('Predicted Mask on Original Image')
             axes[2].axis('off')
             
             save_path = os.path.join(save_dir, f'batch_{batch_idx}_image_{i}_prediction.png')
             plt.savefig(save_path)
             plt.close()
+
 # def main():
 #     # Define the path to your .pth file
 #     file_path = "./model35.pth"
