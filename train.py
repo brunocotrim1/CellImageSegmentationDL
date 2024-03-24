@@ -15,6 +15,7 @@ import time
 import torch.optim as optim
 import argparse
 from FCN import FastFCN
+import torchvision.models as models
 # class CustomDiceCELoss(torch.nn.Module):
 #     def __init__(self):
 #         super(CustomDiceCELoss, self).__init__()
@@ -75,19 +76,21 @@ class CustomDataset(Dataset):
         image = torch.from_numpy(image)
         return image, label
     
-def train_batch(images, labels, model, optimizer,device):
+def train_batch(images, labels, model, optimizer,device,pretrained=False):
     model.train()
     images = images.to(device)
     labels = labels.to(device)
     for param in model.parameters():
         param.grad = None
     outputs = model(images)
+    if pretrained:
+        outputs = outputs['out']
     loss = CustomDiceCELoss()(outputs, labels)
     loss.backward()
     optimizer.step()
     return loss.item()
 
-def train_config(model, optimizer, device, data_loader_train, data_loader_test, num_epochs,model_name):
+def train_config(model, optimizer, device, data_loader_train, data_loader_test, num_epochs,model_name,pretrained = False):
     patience = 7  # Number of epochs to wait for improvement
     counter = 0  # Counter to track epochs without improvement
     best_loss = np.inf  # Initialize with a large value
@@ -98,11 +101,12 @@ def train_config(model, optimizer, device, data_loader_train, data_loader_test, 
         print(f"Epoch {epoch+1} of {num_epochs}")
         epoch_loss = 0.0
         for images, labels in data_loader_train:
-            loss = train_batch(images, labels, model, optimizer, device)
+            loss = train_batch(images, labels, model, optimizer, device,pretrained=pretrained)
             epoch_loss += loss * images.size(0)
+            print(f"Batch took: {time.time()-start:.4f} seconds with loss: {loss}")
         epoch_loss /= len(data_loader_train.dataset)
         losses.append(epoch_loss)  # Store epoch loss
-        eval = evaluate(model, data_loader_test, device,simple=True,plot=False,save_dir=None)
+        eval = evaluate(model, data_loader_test, device,simple=True,plot=False,save_dir=None,pretrained=pretrained)
         val_f1.append(eval['f1_score'])
         print(f"Epoch [{epoch+1}/{num_epochs}], DiceCE Loss: {epoch_loss:.4f}, took: {time.time()-start:.4f} seconds,with F1 score: {eval['f1_score']}")
         # Implement early stopping
@@ -163,7 +167,7 @@ def main():
     dataset_train = CustomDataset(image_dir, label_dir, transform)
     dataset_test = CustomDataset(image_dir_test, label_dir_test, transform)
     # Create a data loader
-    batch_size = 40
+    batch_size = 8
     data_loader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True,pin_memory=True,num_workers=0)
     data_loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False,pin_memory=True,num_workers=0)
     device = torch.device("mps" if torch.backends.mps.is_available else "cpu")
@@ -172,8 +176,11 @@ def main():
     config = "{}-{}-{}".format(opt.learning_rate, opt.optimizer, opt.epochs).replace('.','')
     name='UNET-validation-{}'.format(config)
     train = True
-    model = FastFCN(3, 256).to(device)
+    #model = FastFCN(3,256).to(device)
     #model = UNet(3).to(device)
+    from torchvision.models.segmentation import deeplabv3_resnet50
+    model = deeplabv3_resnet50(pretrained=False, num_classes=3,weights = None).to(device)
+    #model = SwinUNet(3).to(device)
     if train:
         num_epochs = opt.epochs
         
@@ -189,7 +196,7 @@ def main():
         total_params = sum(p.numel() for p in model.parameters())
         print(f"Total number of parameters: {total_params}")
         train_config(model, optimizer, device, data_loader_train=data_loader_train
-                 ,data_loader_test=data_loader_test, num_epochs=num_epochs,model_name=name)
+                 ,data_loader_test=data_loader_test, num_epochs=num_epochs,model_name=name,pretrained = True)
     else:
         model.load_state_dict(torch.load(f'./{name}.pth'))
         

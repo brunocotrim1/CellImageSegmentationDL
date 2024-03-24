@@ -42,11 +42,11 @@ def calculate_metrics(predicted, labels):
     labels_flat = labels.flatten()
 
     # Calculate precision, recall, F1-score, and support
-    precision, recall, f1_score, _ = precision_recall_fscore_support(labels_flat, predicted_flat, average='weighted')
+    precision, recall, f1_score, _ = precision_recall_fscore_support(labels_flat, predicted_flat, average='weighted',zero_division=0)
 
     # Calculate intersection over union (IoU)
-    iou = jaccard_score(labels_flat, predicted_flat, average='weighted')
-    dice = dice_coefficient(predicted_flat.numpy(), labels_flat.numpy())
+    iou = jaccard_score(labels_flat, predicted_flat, average='weighted',zero_division=0)
+    dice = dice_coefficient(predicted_flat.numpy(), labels_flat.numpy(),zero_division=0)
 
     return precision, recall, f1_score, iou, dice
 def calculate_accuracy(mask_pred, mask_true):
@@ -66,15 +66,17 @@ def calculate_accuracy(mask_pred, mask_true):
     return accuracy
 
 
-def predict(model, truth):
+def predict(model, truth,pretrained=False):
     model.eval()
     with torch.no_grad():
         predicted = model(truth)
+        if pretrained:
+            predicted = predicted['out']
     probabilities = F.softmax(predicted, dim=1)
     _, predicted = torch.max(probabilities, 1)
     return predicted
 
-def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualization"):
+def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualization",pretrained=False):
     model.eval()
     f1_score_acc = []
     recall_acc  = []
@@ -86,7 +88,7 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
     for batch_idx,(images, labels) in enumerate(loader):
         #print(f"Predicting Batch ")
         images = images.to(device)  # Move images to GPU
-        predicted = predict(model, images).cpu()  # Model prediction and conversion to NumPy on GPU
+        predicted = predict(model, images,pretrained).cpu()  # Model prediction and conversion to NumPy on GPU
         if plot:
             plot_results(images, labels, predicted, save_dir, batch_idx)
         for i in range(len(predicted)):
@@ -95,7 +97,7 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
                 labels_flat = labels.flatten()
 
                 # Calculate precision, recall, F1-score, and support
-                _, _, f1_score, _ = precision_recall_fscore_support(labels_flat, predicted_flat, average='weighted')
+                _, _, f1_score, _ = precision_recall_fscore_support(labels_flat, predicted_flat, average='weighted',zero_division=0)
                 f1_score_acc.append(f1_score)
             else:
                 precision, recall, f1_score, iou, dice = calculate_metrics(predicted[i], labels[i])
