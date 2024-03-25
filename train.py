@@ -16,23 +16,10 @@ import torch.optim as optim
 import argparse
 from FCN import FastFCN
 import torchvision.models as models
-# class CustomDiceCELoss(torch.nn.Module):
-#     def __init__(self):
-#         super(CustomDiceCELoss, self).__init__()
-
-#     def forward(self, pred, target):  
-#         # Calculate Dice loss
-#         numerator = 2 * torch.sum(pred * target, dim=(2, 3))
-#         denominator = torch.sum(pred + target, dim=(2, 3))
-#         dice_score = torch.mean(numerator / denominator)
-
-#         # Calculate Cross-Entropy loss
-#         ce_loss = F.cross_entropy(pred, target.argmax(dim=1))
-
-#         # Combine Dice loss and Cross-Entropy loss
-#         combined_loss = 1 - dice_score + ce_loss
-
-#         return combined_losss
+from torchvision.models.segmentation import deeplabv3_resnet50
+from networks.vit_seg_modeling import VisionTransformer as ViT_seg
+from networks.vit_seg_modeling import CONFIGS as CONFIGS_ViT_seg
+#https://github.com/Beckschen/TransUNet/tree/main
 class CustomDiceCELoss(torch.nn.Module):
     def __init__(self):
         super(CustomDiceCELoss, self).__init__()
@@ -173,23 +160,40 @@ def main():
     device = torch.device("mps" if torch.backends.mps.is_available else "cpu")
 
     # Iterate through the data loader
+    
     config = "{}-{}-{}".format(opt.learning_rate, opt.optimizer, opt.epochs).replace('.','')
     name='UNET-validation-{}'.format(config)
     train = True
+    size = 256
+    model = "VIT"
+    if model == "FCN":
+        pretrained = False
+        model = FastFCN(3,size).to(device)
+    elif model == "UNET":
+        pretrained = False
+        model = UNet(3).to(device)
+    elif model == "DEEPLAB":
+        pretrained = True
+        model = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=3,weights = None).to(device)
+    elif model == "VIT":
+        pretrained = False
+        vit = "R50-ViT-B_16"
+        config_vit = CONFIGS_ViT_seg[vit]
+        config_vit.n_classes = 3
+        config_vit.n_skip = 3
+        if vit.find('R50') != -1:
+            config_vit.patches.grid = (int(size / 16), int(size / 16))
+        model = ViT_seg(config_vit, img_size=size, num_classes=config_vit.n_classes).to(device)
     #model = FastFCN(3,256).to(device)
     #model = UNet(3).to(device)
-    from torchvision.models.segmentation import deeplabv3_resnet50
-    model = deeplabv3_resnet50(pretrained=False, num_classes=3,weights = None).to(device)
-    from networks.vit_seg_modeling import VisionTransformer as ViT_seg
-    from networks.vit_seg_modeling import CONFIGS as CONFIGS_ViT_seg
     #model = SwinUNet(3).to(device)
     # Example usage:
-    config_vit = CONFIGS_ViT_seg["R50-ViT-B_16"]
-    config_vit.n_classes = 3
-    config_vit.n_skip = 3
-    if "R50-ViT-B_16".find('R50') != -1:
-        config_vit.patches.grid = (int(256 / 16), int(256 / 16))
-    model = ViT_seg(config_vit, img_size=256, num_classes=config_vit.n_classes).to(device)
+    # config_vit = CONFIGS_ViT_seg["R50-ViT-B_16"]
+    # config_vit.n_classes = 3
+    # config_vit.n_skip = 3
+    # if "R50-ViT-B_16".find('R50') != -1:
+    #     config_vit.patches.grid = (int(256 / 16), int(256 / 16))
+    # model = ViT_seg(config_vit, img_size=256, num_classes=config_vit.n_classes).to(device)
     if train:
         num_epochs = opt.epochs
         
@@ -205,7 +209,7 @@ def main():
         total_params = sum(p.numel() for p in model.parameters())
         print(f"Total number of parameters: {total_params}")
         train_config(model, optimizer, device, data_loader_train=data_loader_train
-                 ,data_loader_test=data_loader_test, num_epochs=num_epochs,model_name=name,pretrained = False)
+                 ,data_loader_test=data_loader_test, num_epochs=num_epochs,model_name=name,pretrained = pretrained)
     else:
         model.load_state_dict(torch.load(f'./{name}.pth'))
         

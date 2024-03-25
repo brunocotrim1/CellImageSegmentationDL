@@ -203,6 +203,3 @@ def plot_results(images, labels, predicted, save_dir, batch_idx):
     #         recall_acc.append(recall)
     #         precision_acc.append(precision)
     #         iou_acc.append(iou)
-
-if __name__ == '__main__':
-    main()
