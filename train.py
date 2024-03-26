@@ -20,6 +20,7 @@ from torchvision.models.segmentation import deeplabv3_resnet50
 from networks.vit_seg_modeling import VisionTransformer as ViT_seg
 from networks.vit_seg_modeling import CONFIGS as CONFIGS_ViT_seg
 #https://github.com/Beckschen/TransUNet/tree/main
+torch.set_printoptions(threshold=float('inf'))
 class CustomDiceCELoss(torch.nn.Module):
     def __init__(self):
         super(CustomDiceCELoss, self).__init__()
@@ -27,7 +28,6 @@ class CustomDiceCELoss(torch.nn.Module):
     def forward(self, pred, target):  
         # Calculate probabilities from logits using softmax
         pred_probs = F.softmax(pred, dim=1)
-        
         # Calculate Dice loss for each class
         intersection = torch.sum(pred_probs * target, dim=(2, 3))
         union = torch.sum(pred_probs, dim=(2, 3)) + torch.sum(target, dim=(2, 3))
@@ -35,7 +35,6 @@ class CustomDiceCELoss(torch.nn.Module):
 
         # Calculate Cross-Entropy loss
         ce_loss = F.cross_entropy(pred, target.argmax(dim=1))
-
         # Combine Dice loss and Cross-Entropy loss
         combined_loss = 1 - dice_score + ce_loss
 
@@ -90,7 +89,7 @@ def train_config(model, optimizer, device, data_loader_train, data_loader_test, 
         for images, labels in data_loader_train:
             loss = train_batch(images, labels, model, optimizer, device,pretrained=pretrained)
             epoch_loss += loss * images.size(0)
-            print(f"Batch took: {time.time()-start:.4f} seconds with loss: {loss}")
+            #print(f"Batch took: {time.time()-start:.4f} seconds with loss: {loss}")
         epoch_loss /= len(data_loader_train.dataset)
         losses.append(epoch_loss)  # Store epoch loss
         eval = evaluate(model, data_loader_test, device,simple=True,plot=False,save_dir=None,pretrained=pretrained)
@@ -154,7 +153,7 @@ def main():
     dataset_train = CustomDataset(image_dir, label_dir, transform)
     dataset_test = CustomDataset(image_dir_test, label_dir_test, transform)
     # Create a data loader
-    batch_size = 8
+    batch_size = 32
     data_loader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True,pin_memory=True,num_workers=0)
     data_loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False,pin_memory=True,num_workers=0)
     device = torch.device("mps" if torch.backends.mps.is_available else "cpu")
@@ -162,19 +161,22 @@ def main():
     # Iterate through the data loader
     
     config = "{}-{}-{}".format(opt.learning_rate, opt.optimizer, opt.epochs).replace('.','')
-    name='UNET-validation-{}'.format(config)
+    print("Configs: ",config)
     train = True
     size = 256
-    model = "VIT"
+    model = "UNET"
     if model == "FCN":
         pretrained = False
         model = FastFCN(3,size).to(device)
+        name = "FCN-validation-{}".format(config)
     elif model == "UNET":
         pretrained = False
         model = UNet(3).to(device)
+        name = "UNET-validation-{}".format(config)
     elif model == "DEEPLAB":
         pretrained = True
         model = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=3,weights = None).to(device)
+        name = "DEEPLAB-validation-{}".format(config)
     elif model == "VIT":
         pretrained = False
         vit = "R50-ViT-B_16"
@@ -184,6 +186,27 @@ def main():
         if vit.find('R50') != -1:
             config_vit.patches.grid = (int(size / 16), int(size / 16))
         model = ViT_seg(config_vit, img_size=size, num_classes=config_vit.n_classes).to(device)
+        name = "VIT-validation-{}".format(config)
+    elif model == "test":
+        pretrained = False
+        
+        from transformers import AutoModelForSemanticSegmentation
+        from hf_config import UnetConfig  # Import the provided config class
+        from hf_model import HFUnetPlusPlus  # Import the provided model class
+        # Define your configuration
+        my_config = UnetConfig(
+            encoder_name="resnet18",
+            num_classes=3,
+            input_channels=3,
+            decoder_channels=(1024, 512, 256, 128, 64)
+        )
+
+        # Load the model using AutoModelForSemanticSegmentation
+        model = HFUnetPlusPlus(config=my_config).to(device)
+        name = "HFUNET-validation-{}".format(config)
+
+# Now you can use the model for inference or fine-tuning
+
     #model = FastFCN(3,256).to(device)
     #model = UNet(3).to(device)
     #model = SwinUNet(3).to(device)
