@@ -28,14 +28,11 @@ np.set_printoptions(threshold=np.inf)
 # Create a rainbow colormap
 
 
-def dice_coefficient(predicted, labels):
-    # Calculate the intersection and union
-    intersection = np.sum(predicted * labels)
-    total = np.sum(predicted) + np.sum(labels)
-    
-    # Calculate the Dice coefficient
-    dice = (2.0 * intersection) / (total + 1e-8)  # Add a small epsilon to avoid division by zero
-    return dice
+def dice_coefficient(y_true, y_pred):
+    jaccard = jaccard_score(y_true, y_pred, average='weighted',zero_division=0)
+    return 2*jaccard / (1 + jaccard)
+
+
 def calculate_metrics(predicted, labels):
     # Flatten the predicted and true labels
     predicted_flat = predicted.flatten()
@@ -46,7 +43,7 @@ def calculate_metrics(predicted, labels):
 
     # Calculate intersection over union (IoU)
     iou = jaccard_score(labels_flat, predicted_flat, average='weighted',zero_division=0)
-    dice = dice_coefficient(predicted_flat.numpy(), labels_flat.numpy(),zero_division=0)
+    dice = dice_coefficient(predicted_flat.numpy(), labels_flat.numpy())
 
     return precision, recall, f1_score, iou, dice
 def calculate_accuracy(mask_pred, mask_true):
@@ -85,6 +82,7 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
     pixel_acc_acc  = []
     challenge_evaluation_acc = []
     dice_acc = []
+    trainLossAcc = []
     for batch_idx,(images, labels) in enumerate(loader):
         #print(f"Predicting Batch ")
         images = images.to(device)  # Move images to GPU
@@ -92,14 +90,7 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
         if plot:
             plot_results(images, labels, predicted, save_dir, batch_idx)
         for i in range(len(predicted)):
-            if simple: 
-                predicted_flat = predicted.flatten()
-                labels_flat = labels.flatten()
-
-                # Calculate precision, recall, F1-score, and support
-                _, _, f1_score, _ = precision_recall_fscore_support(labels_flat, predicted_flat, average='weighted',zero_division=0)
-                f1_score_acc.append(f1_score)
-            else:
+            if not simple: 
                 precision, recall, f1_score, iou, dice = calculate_metrics(predicted[i], labels[i])
                 f1_score_acc.append(f1_score)
                 recall_acc.append(recall)
@@ -107,8 +98,13 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
                 dice_acc.append(dice)
                 iou_acc.append(iou)
                 pixel_acc_acc.append(calculate_accuracy(predicted[i].numpy(), labels[i].numpy()))
+            else:
+                predicted_flat = predicted.flatten()
+                labels_flat = labels.flatten()
+                trainLossAcc.append(dice_coefficient(predicted_flat.numpy(), labels_flat.numpy()))
+        del images, labels, predicted
     if simple:
-        return {'f1_score': np.mean(f1_score_acc)}
+        return {'loss': np.mean(trainLossAcc)}
     else:
         return {'iou': "{:.4f}".format(np.mean(iou_acc)),
                        'dice': "{:.4f}".format(np.mean(dice_acc)),
@@ -117,29 +113,61 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
                        'recall': "{:.4f}".format(np.mean(recall_acc)),
                        'f1_score': "{:.4f}".format(np.mean(f1_score_acc))}
 
+
+
 def plot_results(images, labels, predicted, save_dir, batch_idx):
-        for i in range(len(predicted)):
-            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    for i in range(len(predicted)):
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        
+        # Plot original image
+        axes[0].imshow(np.clip(np.transpose(images[i].cpu().numpy(), (1, 2, 0)), 0, 1))
+        axes[0].set_title('Original Image')
+        axes[0].axis('off')
+        
+        # Define custom colormap
+        custom_cmap = plt.cm.get_cmap('viridis', 3)
+        custom_cmap.set_under('black')  # Set color for values less than vmin
+        
+        # Plot ground truth mask
+        axes[1].imshow(np.clip(labels[i], 0, 2), cmap=custom_cmap)
+        axes[1].contour(labels[i] == 1, colors='white', levels=[0.5])  # Overlay white lines on boundary
+        axes[1].set_title('Ground Truth Mask')
+        axes[1].axis('off')
+        
+        # Plot predicted mask with custom colormap
+        axes[2].imshow(np.clip(np.transpose(images[i].cpu().numpy(), (1, 2, 0)), 0, 1))
+        axes[2].imshow(np.clip(predicted[i], 0, 1), cmap=custom_cmap, alpha=0.7, vmin=0.5)
+        axes[2].contour(predicted[i] == 1, colors='white', levels=[0.5])  # Overlay white lines on boundary
+        axes[2].set_title('Predicted Mask on Original Image')
+        axes[2].axis('off')
+        
+        save_path = os.path.join(save_dir, f'batch_{batch_idx}_image_{i}_prediction.png')
+        plt.savefig(save_path)
+        plt.close()
+
+# def plot_results(images, labels, predicted, save_dir, batch_idx):
+#         for i in range(len(predicted)):
+#             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
             
-            # Plot original image
-            axes[0].imshow(np.clip(np.transpose(images[i].cpu().numpy(), (1, 2, 0)),0,1))
-            axes[0].set_title('Original Image')
-            axes[0].axis('off')
+#             # Plot original image
+#             axes[0].imshow(np.clip(np.transpose(images[i].cpu().numpy(), (1, 2, 0)),0,1))
+#             axes[0].set_title('Original Image')
+#             axes[0].axis('off')
             
-            # Plot ground truth mask
-            axes[1].imshow(np.clip(labels[i],0,1), cmap='gray')
-            axes[1].set_title('Ground Truth Mask')
-            axes[1].axis('off')
+#             # Plot ground truth mask
+#             axes[1].imshow(np.clip(labels[i],0,1), cmap='gray')
+#             axes[1].set_title('Ground Truth Mask')
+#             axes[1].axis('off')
             
-            # Plot predicted mask with custom colormap
-            axes[2].imshow(np.clip(np.transpose(images[i].cpu().numpy(), (1, 2, 0)),0,1))
-            axes[2].imshow(np.clip(predicted[i],0,1), cmap=custom_cmap, alpha=0.7)
-            axes[2].set_title('Predicted Mask on Original Image')
-            axes[2].axis('off')
+#             # Plot predicted mask with custom colormap
+#             axes[2].imshow(np.clip(np.transpose(images[i].cpu().numpy(), (1, 2, 0)),0,1))
+#             axes[2].imshow(np.clip(predicted[i],0,1), cmap=custom_cmap, alpha=0.7)
+#             axes[2].set_title('Predicted Mask on Original Image')
+#             axes[2].axis('off')
             
-            save_path = os.path.join(save_dir, f'batch_{batch_idx}_image_{i}_prediction.png')
-            plt.savefig(save_path)
-            plt.close()
+#             save_path = os.path.join(save_dir, f'batch_{batch_idx}_image_{i}_prediction.png')
+#             plt.savefig(save_path)
+#             plt.close()
 
 # def main():
 #     # Define the path to your .pth file

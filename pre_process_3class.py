@@ -78,7 +78,8 @@ import random
 from PIL import Image
 
 class RandomCropOrResize(object):
-    def __init__(self, output_size):
+    def __init__(self, output_size,test=False):
+        self.test = test
         assert isinstance(output_size, (int, tuple))
         if isinstance(output_size, int):
             self.output_size = (output_size, output_size)
@@ -100,12 +101,11 @@ class RandomCropOrResize(object):
 
         positionTransform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
-        
+        #if self.test:
         img = positionTransform(img)
         resizeMask = transforms.Resize((new_h, new_w),interpolation=Image.NEAREST)
-        #resize = transforms.Resize((new_h, new_w),interpolation=Image.BICUBIC)
         # Convert tensor to image (assuming RGB)
         img = cv2.cvtColor(np.transpose(img.numpy(), (1, 2, 0)), cv2.COLOR_RGB2BGR)
         # Upscale image using Lanczos interpolation
@@ -167,7 +167,7 @@ def main():
         # conver instance bask to three-class mask: interior, boundary
         #print(gt_data)
         interior_map = create_interior_map(gt_data.astype(np.int16))
-        pre_img_data, interior_map = RandomCropOrResize((length,length))({'image':pre_img_data, 'interior_map':interior_map})
+        pre_img_data, interior_map = RandomCropOrResize((length,length),test=test)({'image':pre_img_data, 'interior_map':interior_map})
         if not test:
             interior_map = one_hot_encode(interior_map, encoding_map)
         np.save(join(target_path, 'images', img_name.split('.')[0]+'.npy'), pre_img_data)

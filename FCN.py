@@ -125,7 +125,7 @@ class JPU(nn.Module):
 class FastFCN(nn.Module):
     def __init__(self, num_classes,width=256):
         super(FastFCN, self).__init__()
-        resnet = models.resnet50(weights=None)
+        resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
         self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu)
         self.layer1 = nn.Sequential(resnet.maxpool, resnet.layer1)
         self.layer2 = resnet.layer2
@@ -133,7 +133,7 @@ class FastFCN(nn.Module):
         self.layer4 = resnet.layer4
         self.jpu = JPU(in_channels=[256,512, 1024, 2048],width=width, norm_layer=nn.BatchNorm2d)
 
-        self.head = nn.Conv2d(256, num_classes, kernel_size=1)
+        self.head = nn.Conv2d(width, num_classes, kernel_size=1)
 
     def forward(self, x):
         x_size = x.size()[2:]
