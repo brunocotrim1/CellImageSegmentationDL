@@ -27,22 +27,22 @@ import torch
 import torch.nn.functional as F
 
 class MyFocalLoss(torch.nn.Module):
-    def __init__(self, alpha=None, gamma=2, reduction='mean'):
+    def __init__(self, alpha=[1,1,1], gamma=2, reduction='mean',device='cuda'):
         super(MyFocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.reduction = reduction
-
+        self.alpha = torch.tensor(alpha).to(device)
     def forward(self, preds, targets):
         # Compute cross entropy
-        ce_loss = F.cross_entropy(preds, targets.float(), reduction='none')
+        ce_loss = F.cross_entropy(preds, targets.float(), reduction='none',weight=self.alpha)
 
         # Compute focal loss
         pt = torch.exp(-ce_loss)
-        if(self.alpha is not None):
-            focal_loss = (self.alpha * (1 - pt) ** self.gamma * ce_loss)
-        else:
-            focal_loss = ((1 - pt) ** self.gamma * ce_loss)
+        # if(self.alpha is not None):
+        #     focal_loss = (self.alpha * (1 - pt) ** self.gamma * ce_loss)
+        # else:
+        focal_loss = ((1 - pt) ** self.gamma * ce_loss)
 
         # Apply reduction
         if self.reduction == 'mean':
@@ -76,12 +76,17 @@ class CustomDiceCELoss(torch.nn.Module):
         #combined_loss = 0.5 * (1 - dice_score) + 0.5 * ce_loss
         #combined_loss = 1 - dice_score
         #combined_loss = ce_loss
-        preds = F.softmax(pred, dim=1)
+        
+        ce_loss = F.cross_entropy(pred, target.argmax(dim=1))
 
-        intersection = torch.sum(preds * target, dim=(2, 3))
-        union = torch.sum(preds, dim=(2, 3)) + torch.sum(target, dim=(2, 3))
+        pred = F.softmax(pred[:,1:,:,:], dim=1)
+        target = target[:,1:,:,:]
+        intersection = torch.sum(pred * target, dim=(2, 3))
+        union = torch.sum(pred, dim=(2, 3)) + torch.sum(target, dim=(2, 3))
         dice = torch.mean((2. * intersection + 1e-5) / (union + 1e-5))
-        return 1-dice
+        return 1-dice+ce_loss
+
+
 
 
 # Example usage:
@@ -166,7 +171,8 @@ def train_batch(images, labels, model, optimizer,device,pretrained=False):
     outputs = model(imagesDevice)
     if pretrained:
         outputs = outputs['out']
-    loss = MyFocalLoss()(outputs, labelsDevice)
+    #loss = MyFocalLoss(device=device)(outputs, labelsDevice)
+    loss = CustomDiceCELoss()(outputs, labelsDevice)
     loss.backward()
     optimizer.step()
     del imagesDevice,labelsDevice,outputs
@@ -270,7 +276,7 @@ def main():
     # Iterate through the data loader
     
     config = "{}-{}-{}-{}-{}".format(opt.learning_rate, opt.optimizer, opt.epochs,batch_size,opt.size).replace('.','')
-    train = True
+    train = False
     size = opt.size
     model = "MyUNETV2"
     if model == "FCN":
