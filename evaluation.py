@@ -73,6 +73,53 @@ def predict(model, truth,pretrained=False):
     _, predicted = torch.max(probabilities, 1)
     return predicted
 
+
+import cv2
+import numpy as np
+import torch
+
+def watershed_postprocessing(mask):
+    batch_size = mask.size(0)
+    segmented_masks = []
+
+    for i in range(batch_size):
+        # Convert tensor to numpy array
+        mask_np = mask[i].cpu().numpy() if mask.is_cuda else mask[i].numpy()
+
+        # Convert mask to uint8
+        mask_uint8 = (mask_np * 255).astype(np.uint8)
+
+        # Invert the binary mask to obtain background region
+        background = cv2.bitwise_not(mask_uint8)
+
+        # Apply thresholding to obtain binary image
+        _, thresh = cv2.threshold(mask_uint8, 1, 255, cv2.THRESH_BINARY)
+
+        # Find contours
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Create markers for watershed segmentation
+        markers = np.zeros_like(mask_uint8, dtype=np.int32)
+
+        # Mark background region
+        cv2.drawContours(markers, contours, -1, 1, -1)
+
+        # Mark boundary region
+        markers[mask_uint8 == 2] = 2
+
+        # Apply watershed segmentation
+        markers = cv2.watershed(cv2.cvtColor(mask_uint8, cv2.COLOR_GRAY2BGR), markers)
+
+        # Convert markers back to segmented mask
+        segmented_mask = np.zeros_like(mask_np, dtype=np.uint8)
+        segmented_mask[markers == -1] = 2  # Boundary
+        segmented_mask[markers == 1] = 1   # Inside
+        segmented_mask[background == 255] = 0   # Outside
+
+        # Convert back to tensor and append to list
+        segmented_masks.append(torch.from_numpy(segmented_mask))
+    return torch.stack(segmented_masks)
+
 def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualization",pretrained=False):
     model.eval()
     f1_score_acc = []
@@ -87,6 +134,7 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
         #print(f"Predicting Batch ")
         images = images.to(device)  # Move images to GPU
         predicted = predict(model, images,pretrained).cpu()  # Model prediction and conversion to NumPy on GPU
+        predicted = watershed_postprocessing(predicted)
         if plot:
             plot_results(images, labels, predicted, save_dir, batch_idx)
         for i in range(len(predicted)):

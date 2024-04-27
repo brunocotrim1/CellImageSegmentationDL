@@ -22,12 +22,13 @@ import random
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from data_augmentation import *
 #https://github.com/Beckschen/TransUNet/tree/main
+#SEGMENT-ANYTHING-https://github.com/bowang-lab/MedSAM/blob/main/comparisons/SAM/infer_SAM_2D_npz.py
 torch.set_printoptions(threshold=float('inf'))
 import torch
 import torch.nn.functional as F
 
 class MyFocalLoss(torch.nn.Module):
-    def __init__(self, alpha=[1,1,1], gamma=2, reduction='mean',device='cuda'):
+    def __init__(self, alpha=0.25, gamma=2, reduction='mean',device='cuda'):
         super(MyFocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -35,14 +36,14 @@ class MyFocalLoss(torch.nn.Module):
         self.alpha = torch.tensor(alpha).to(device)
     def forward(self, preds, targets):
         # Compute cross entropy
-        ce_loss = F.cross_entropy(preds, targets.float(), reduction='none',weight=self.alpha)
+        ce_loss = F.cross_entropy(preds, targets.float(), reduction='none')
 
         # Compute focal loss
         pt = torch.exp(-ce_loss)
-        # if(self.alpha is not None):
-        #     focal_loss = (self.alpha * (1 - pt) ** self.gamma * ce_loss)
-        # else:
-        focal_loss = ((1 - pt) ** self.gamma * ce_loss)
+        if(self.alpha is not None):
+             focal_loss = (self.alpha * (1 - pt) ** self.gamma * ce_loss)
+        else:
+            focal_loss = ((1 - pt) ** self.gamma * ce_loss)
 
         # Apply reduction
         if self.reduction == 'mean':
@@ -79,8 +80,7 @@ class CustomDiceCELoss(torch.nn.Module):
         
         ce_loss = F.cross_entropy(pred, target.argmax(dim=1))
 
-        pred = F.softmax(pred[:,1:,:,:], dim=1)
-        target = target[:,1:,:,:]
+        pred = F.softmax(pred, dim=1)
         intersection = torch.sum(pred * target, dim=(2, 3))
         union = torch.sum(pred, dim=(2, 3)) + torch.sum(target, dim=(2, 3))
         dice = torch.mean((2. * intersection + 1e-5) / (union + 1e-5))
@@ -113,16 +113,10 @@ class CustomDataset(Dataset):
         label_path = os.path.join(self.label_dir, label_name)
         image = np.load(img_path)
         label = np.load(label_path)
-
         #image, label = random_patch(image, label)
         # label = torch.from_numpy(label)
         # image = torch.from_numpy(image)
         if not self.test:
-            # image = np.transpose(image, (2, 0, 1))
-            # if image.shape[0] ==256:
-            #     image = np.transpose(image, (1, 0, 2))
-            # if label.shape[0] ==256:
-            #     label = np.transpose(label, (1, 0, 2))
             #image = scale_intensity(image)
             # image,label = spatial_pad(image,label, (3, 256, 256))
             # image, label = random_spatial_crop(image, label, (256, 256))
@@ -139,7 +133,7 @@ class CustomDataset(Dataset):
             
         image = image.copy()
         label = label.copy()
-
+        #plot_image_and_label(image, label)
         imageDev = torch.from_numpy(image)
         del image
         labelDev = torch.from_numpy(label)
@@ -171,8 +165,8 @@ def train_batch(images, labels, model, optimizer,device,pretrained=False):
     outputs = model(imagesDevice)
     if pretrained:
         outputs = outputs['out']
-    #loss = MyFocalLoss(device=device)(outputs, labelsDevice)
-    loss = CustomDiceCELoss()(outputs, labelsDevice)
+    loss = MyFocalLoss(device=device)(outputs, labelsDevice)
+    #loss = CustomDiceCELoss()(outputs, labelsDevice)
     loss.backward()
     optimizer.step()
     del imagesDevice,labelsDevice,outputs
@@ -184,6 +178,7 @@ def train_config(model, optimizer, device, data_loader_train, data_loader_test, 
     best_loss = np.inf  # Initialize with a large value
     losses = []  # List to store epoch losses
     val_loss= []
+    best_val_loss = 0
     for epoch in range(num_epochs):
         start = time.time()
         print(f"Epoch {epoch+1} of {num_epochs}")
@@ -200,6 +195,9 @@ def train_config(model, optimizer, device, data_loader_train, data_loader_test, 
         eval = evaluate(model, data_loader_test, device,simple=True,plot=False,save_dir=None,pretrained=pretrained)
         val_loss.append(eval['loss'])
         print(f"Epoch [{epoch+1}/{num_epochs}], DiceCE Loss: {epoch_loss:.4f}, took: {time.time()-start:.4f} seconds,with eval Dice Eval: {eval['loss']}")
+        if eval['loss'] > best_val_loss:
+            best_val_loss = eval['loss']
+            torch.save(model.state_dict(), f'./models/{model_name}_best_checkpoint.pth')
         # Implement early stopping
         if epoch_loss < best_loss:
             best_loss = epoch_loss
@@ -278,10 +276,14 @@ def main():
     config = "{}-{}-{}-{}-{}".format(opt.learning_rate, opt.optimizer, opt.epochs,batch_size,opt.size).replace('.','')
     train = False
     size = opt.size
-    model = "MyUNETV2"
-    if model == "FCN":
+    model = "VIT"
+    if model == "FAST_FCN":
         pretrained = False
         model = FastFCN(3,size).to(device)
+        name = "Fast_FCN-validation-{}".format(config)
+    elif model == "FCN":
+        pretrained = True
+        model = models.segmentation.fcn_resnet50(pretrained=False, num_classes=3, aux_loss=None,weights = None).to(device)
         name = "FCN-validation-{}".format(config)
     elif model == "UNET":
         pretrained = False
@@ -332,10 +334,9 @@ def main():
             optimizer = optim.AdamW(model.parameters(), lr=opt.learning_rate)
             scheduler = None
         else:
-            learning_rate = 0.001
             #decay_rate = learning_rate / num_epochs
             momentum = 0.9
-            optimizer = optim.SGD(model.parameters(), lr=learning_rate, 
+            optimizer = optim.SGD(model.parameters(), lr=opt.learning_rate, 
                                   momentum=momentum, nesterov=True)
             scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=3, T_mult=1)
         
@@ -344,9 +345,9 @@ def main():
         train_config(model, optimizer, device, data_loader_train=data_loader_train
                  ,data_loader_test=data_loader_test, num_epochs=num_epochs,model_name=name,pretrained = pretrained,scheduler=scheduler)
     else:
-        model.load_state_dict(torch.load(f'./models/{name}.pth'))
-        
-        print(evaluate(model, data_loader_test, device,simple=False,plot=True,save_dir='visualizations/'))
+        #model.load_state_dict(torch.load(f'./models/{name}.pth'))
+        model.load_state_dict(torch.load('models/VIT-validation-00001-adam-30-8-256.pth'))
+        print(evaluate(model, data_loader_test, device,simple=False,plot=True,pretrained=pretrained,save_dir='visualizations/'))
 
 
 

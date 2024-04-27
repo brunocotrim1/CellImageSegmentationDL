@@ -108,8 +108,10 @@ class RandomCropOrResize(object):
         resizeMask = transforms.Resize((new_h, new_w),interpolation=Image.NEAREST)
         # Convert tensor to image (assuming RGB)
         img = cv2.cvtColor(np.transpose(img.numpy(), (1, 2, 0)), cv2.COLOR_RGB2BGR)
+
         # Upscale image using Lanczos interpolation
-        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+        #img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
 
         #resize = transforms.Resize((new_h, new_w), interpolation=Image.LANCZOS)
         img = np.transpose(img, (2, 0, 1))
@@ -129,7 +131,7 @@ def main():
     source_path = args.input_path
     target_path = args.output_path
     length = args.length
-    test = True
+    test = False
     if test:
         source_path = 'Test_Labeled'
         target_path = 'Test_Pre_3class'
