@@ -4,6 +4,6 @@ Train_Labeled
 Test_Pre_3class
 Test_Labeled
 model.pth
-visualization
+visualizations
 models
 plots

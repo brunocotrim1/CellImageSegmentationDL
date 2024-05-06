@@ -26,7 +26,7 @@ from data_augmentation import *
 torch.set_printoptions(threshold=float('inf'))
 import torch
 import torch.nn.functional as F
-
+from evaluation import *
 class MyFocalLoss(torch.nn.Module):
     def __init__(self, alpha=0.25, gamma=2, reduction='mean',device='cuda'):
         super(MyFocalLoss, self).__init__()
@@ -178,6 +178,7 @@ def train_config(model, optimizer, device, data_loader_train, data_loader_test, 
     best_loss = np.inf  # Initialize with a large value
     losses = []  # List to store epoch losses
     val_loss= []
+    val_dice = []
     best_val_loss = 0
     for epoch in range(num_epochs):
         start = time.time()
@@ -192,11 +193,12 @@ def train_config(model, optimizer, device, data_loader_train, data_loader_test, 
             #print(f"Batch took: {time.time()-start:.4f} seconds with loss: {loss}")
         epoch_loss /= len(data_loader_train.dataset)
         losses.append(epoch_loss)  # Store epoch loss
-        eval = evaluate(model, data_loader_test, device,simple=True,plot=False,save_dir=None,pretrained=pretrained)
+        eval = evaluate(model, data_loader_test, device,simple=True,plot=False,save_dir=None,pretrained=pretrained,loss = MyFocalLoss(device=device))
         val_loss.append(eval['loss'])
-        print(f"Epoch [{epoch+1}/{num_epochs}], DiceCE Loss: {epoch_loss:.4f}, took: {time.time()-start:.4f} seconds,with eval Dice Eval: {eval['loss']}")
-        if eval['loss'] > best_val_loss:
-            best_val_loss = eval['loss']
+        val_dice.append(eval['accuracy'])
+        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, took: {time.time()-start:.4f} seconds,with eval Loss Eval: {eval['loss']}")
+        if eval['accuracy'] > best_val_loss and epoch > 12:
+            best_val_loss = eval['accuracy']
             torch.save(model.state_dict(), f'./models/{model_name}_best_checkpoint.pth')
         # Implement early stopping
         if epoch_loss < best_loss:
@@ -208,28 +210,41 @@ def train_config(model, optimizer, device, data_loader_train, data_loader_test, 
                 print(f'Early stopping at epoch {epoch+1} as no improvement in validation loss.')
                 break  # Stop training loop
 
-    plot_epoch_loss(losses,model_name=model_name)
-    plot_epoch_f1(val_loss,model_name=model_name)
+    plot_epoch_loss(train_losses=losses,test_losses=val_loss,model_name=model_name)
+    plot_epoch_validation(val_dice=val_dice,model_name=model_name)
+    #plot_epoch_f1(val_loss,model_name=model_name)
     torch.save(model.state_dict(), f'./models/{model_name}.pth')
 
-def plot_epoch_loss(losses,model_name):
-    plt.plot(range(0, len(losses)), losses, label='Training Loss')
+def plot_epoch_loss(train_losses, test_losses, model_name):
+    epochs = range(1, len(train_losses) + 1)
+    plt.plot(epochs, train_losses, label='Training Loss')
+    plt.plot(epochs, test_losses, label='Testing Loss')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
-    plt.title('Training Loss Over Epochs')
+    plt.title('Training and Testing Loss Over Epochs')
     plt.legend()
     plt.grid(True)
-    plt.savefig(f"plots/training_loss_{model_name}.png")  # Save the plot to a file
+    plt.savefig(f"plots/loss_{model_name}.png")  # Save the plot to a file
     plt.close()  # Close the plot to free memory
 
-def plot_epoch_f1(val_iou,model_name):
-    plt.plot(range(0, len(val_iou)), val_iou, label='Validation F1')
+# def plot_epoch_loss(losses,model_name):
+#     plt.plot(range(0, len(losses)), losses, label='Training Loss')
+#     plt.xlabel('Epochs')
+#     plt.ylabel('Loss')
+#     plt.title('Training Loss Over Epochs')
+#     plt.legend()
+#     plt.grid(True)
+#     plt.savefig(f"plots/training_loss_{model_name}.png")  # Save the plot to a file
+#     plt.close()  # Close the plot to free memory
+
+def plot_epoch_validation(val_dice,model_name):
+    plt.plot(range(0, len(val_dice)), val_dice, label='Validation Dice')
     plt.xlabel('Epochs')
-    plt.ylabel('F1')
-    plt.title('Validation F1 Over Epochs')
+    plt.ylabel('Dice')
+    plt.title('Validation Dice Over Epochs')
     plt.legend()
     plt.grid(True)
-    plt.savefig(f"plots/testing_F1_{model_name}.png")  # Save the plot to a file
+    plt.savefig(f"plots/testing_Dice_{model_name}.png")  # Save the plot to a file
     plt.close()  # Close the plot to free memory
 
 def main():
@@ -276,7 +291,7 @@ def main():
     config = "{}-{}-{}-{}-{}".format(opt.learning_rate, opt.optimizer, opt.epochs,batch_size,opt.size).replace('.','')
     train = False
     size = opt.size
-    model = "VIT"
+    model = "MyUNETV2"
     if model == "FAST_FCN":
         pretrained = False
         model = FastFCN(3,size).to(device)
@@ -335,18 +350,18 @@ def main():
             scheduler = None
         else:
             #decay_rate = learning_rate / num_epochs
+            #learning_rate = 0.01
             momentum = 0.9
             optimizer = optim.SGD(model.parameters(), lr=opt.learning_rate, 
                                   momentum=momentum, nesterov=True)
-            scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=3, T_mult=1)
-        
+            scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=3, T_mult=1)        
         total_params = sum(p.numel() for p in model.parameters())
         print(f"Total number of parameters: {total_params}")
         train_config(model, optimizer, device, data_loader_train=data_loader_train
                  ,data_loader_test=data_loader_test, num_epochs=num_epochs,model_name=name,pretrained = pretrained,scheduler=scheduler)
     else:
         #model.load_state_dict(torch.load(f'./models/{name}.pth'))
-        model.load_state_dict(torch.load('models/VIT-validation-00001-adam-30-8-256.pth'))
+        model.load_state_dict(torch.load('models/UNETV2-validation-001-sgd-50-8-256_best_checkpoint.pth'))
         print(evaluate(model, data_loader_test, device,simple=False,plot=True,pretrained=pretrained,save_dir='visualizations/'))
 
 

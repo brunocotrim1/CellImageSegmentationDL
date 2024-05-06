@@ -86,7 +86,7 @@ def random_adjust_contrast(image, gamma_range=(1, 2), prob=0.25):
         image = np.clip(image ** gamma, 0, 1)  # Apply gamma correction
 
     return image
-def random_gaussian_smooth(img, sigma_range=(1, 2)):
+def random_gaussian_smooth(img, sigma_range=(0.5,1)):
     # Apply random Gaussian smoothing to the image
     if random.random() > 0.25:
         return img

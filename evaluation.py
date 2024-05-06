@@ -28,6 +28,21 @@ np.set_printoptions(threshold=np.inf)
 # Create a rainbow colormap
 
 
+encoding_map = {
+    0: [1, 0, 0],  # background
+    1: [0, 1, 0],  # interior
+    2: [0, 0, 1]   # boundary
+}
+
+def one_hot_encode(mask, encoding_map):
+    num_classes = len(encoding_map)
+    batch_size = mask.shape[0]
+    encoded_masks = torch.zeros((batch_size, num_classes, mask.shape[1], mask.shape[2]), dtype=torch.uint8)
+    for class_id, encoding in encoding_map.items():
+        encoded_masks[:, class_id] = (mask == class_id).to(torch.uint8)
+    return encoded_masks
+
+
 def dice_coefficient(y_true, y_pred):
     jaccard = jaccard_score(y_true, y_pred, average='weighted',zero_division=0)
     return 2*jaccard / (1 + jaccard)
@@ -63,12 +78,14 @@ def calculate_accuracy(mask_pred, mask_true):
     return accuracy
 
 
-def predict(model, truth,pretrained=False):
+def predict(model, truth,pretrained=False,simple=False):
     model.eval()
     with torch.no_grad():
         predicted = model(truth)
         if pretrained:
             predicted = predicted['out']
+        if simple:
+            return predicted
     probabilities = F.softmax(predicted, dim=1)
     _, predicted = torch.max(probabilities, 1)
     return predicted
@@ -120,7 +137,7 @@ def watershed_postprocessing(mask):
         segmented_masks.append(torch.from_numpy(segmented_mask))
     return torch.stack(segmented_masks)
 
-def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualization",pretrained=False):
+def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualization",pretrained=False, loss = None):
     model.eval()
     f1_score_acc = []
     recall_acc  = []
@@ -133,7 +150,14 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
     for batch_idx,(images, labels) in enumerate(loader):
         #print(f"Predicting Batch ")
         images = images.to(device)  # Move images to GPU
-        predicted = predict(model, images,pretrained).cpu()  # Model prediction and conversion to NumPy on GPU
+        predicted = predict(model, images,pretrained,simple=simple) # Model prediction and conversion to NumPy on GPU
+        if simple:
+            labelsOneHot = one_hot_encode(labels, encoding_map).to(torch.float32).to(device)  # Move labels to GPU
+            trainLossAcc.append(loss(predicted, labelsOneHot).cpu().numpy())
+            del labelsOneHot
+            probabilities = F.softmax(predicted, dim=1)
+            _, predicted = torch.max(probabilities, 1)
+        predicted = predicted.cpu()
         predicted = watershed_postprocessing(predicted)
         if plot:
             plot_results(images, labels, predicted, save_dir, batch_idx)
@@ -149,10 +173,10 @@ def evaluate(model, loader, device,simple=True,plot=False,save_dir="visualizatio
             else:
                 predicted_flat = predicted.flatten()
                 labels_flat = labels.flatten()
-                trainLossAcc.append(dice_coefficient(predicted_flat.numpy(), labels_flat.numpy()))
+                dice_acc.append(dice_coefficient(predicted_flat.numpy(), labels_flat.numpy()))
         del images, labels, predicted
     if simple:
-        return {'loss': np.mean(trainLossAcc)}
+        return {'loss': np.mean(trainLossAcc), 'accuracy': np.mean(dice_acc)}
     else:
         return {'iou': "{:.4f}".format(np.mean(iou_acc)),
                        'dice': "{:.4f}".format(np.mean(dice_acc)),
