@@ -131,10 +131,10 @@ def main():
     source_path = args.input_path
     target_path = args.output_path
     length = args.length
-    test = False
+    test = True
     if test:
-        source_path = 'Test_Labeled'
-        target_path = 'Test_Pre_3class'
+        source_path = 'Validation_Labeled'
+        target_path = 'Validation_Pre_3class'
     img_path = join(source_path, 'images')
     gt_path =  join(source_path, 'labels')
     

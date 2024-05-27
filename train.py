@@ -28,7 +28,7 @@ import torch
 import torch.nn.functional as F
 from evaluation import *
 class MyFocalLoss(torch.nn.Module):
-    def __init__(self, alpha=0.25, gamma=2, reduction='mean',device='cuda'):
+    def __init__(self, alpha=0.20, gamma=2, reduction='mean',device='cuda'):
         super(MyFocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -86,7 +86,23 @@ class CustomDiceCELoss(torch.nn.Module):
         dice = torch.mean((2. * intersection + 1e-5) / (union + 1e-5))
         return 1-dice+ce_loss
 
+class CustomIoUCELoss(torch.nn.Module):
+    def __init__(self):
+        super(CustomIoUCELoss, self).__init__()
 
+    def forward(self, pred, target):  
+        # Calculate probabilities from logits using softmax
+        pred_probs = F.softmax(pred, dim=1)
+        
+        # Calculate Cross-Entropy loss
+        ce_loss = F.cross_entropy(pred, target.argmax(dim=1))
+        
+        # Compute IoU
+        intersection = torch.sum(pred_probs * target, dim=(2, 3))
+        union = torch.sum(pred_probs, dim=(2, 3)) + torch.sum(target, dim=(2, 3)) - intersection
+        iou = torch.mean((intersection + 1e-5) / (union + 1e-5))
+
+        return 1 - iou + ce_loss
 
 
 # Example usage:
@@ -165,7 +181,8 @@ def train_batch(images, labels, model, optimizer,device,pretrained=False):
     outputs = model(imagesDevice)
     if pretrained:
         outputs = outputs['out']
-    loss = MyFocalLoss(device=device)(outputs, labelsDevice)
+    #loss = MyFocalLoss(device=device)(outputs, labelsDevice)
+    loss = CustomIoUCELoss()(outputs, labelsDevice)
     #loss = CustomDiceCELoss()(outputs, labelsDevice)
     loss.backward()
     optimizer.step()
@@ -173,7 +190,7 @@ def train_batch(images, labels, model, optimizer,device,pretrained=False):
     return loss.item()
 
 def train_config(model, optimizer, device, data_loader_train, data_loader_test, num_epochs,model_name,pretrained = False,scheduler=None):
-    patience = 7  # Number of epochs to wait for improvement
+    patience = 12  # Number of epochs to wait for improvement
     counter = 0  # Counter to track epochs without improvement
     best_loss = np.inf  # Initialize with a large value
     losses = []  # List to store epoch losses
@@ -193,7 +210,7 @@ def train_config(model, optimizer, device, data_loader_train, data_loader_test, 
             #print(f"Batch took: {time.time()-start:.4f} seconds with loss: {loss}")
         epoch_loss /= len(data_loader_train.dataset)
         losses.append(epoch_loss)  # Store epoch loss
-        eval = evaluate(model, data_loader_test, device,simple=True,plot=False,save_dir=None,pretrained=pretrained,loss = MyFocalLoss(device=device))
+        eval = evaluate(model, data_loader_test, device,simple=True,plot=False,save_dir=None,pretrained=pretrained,loss = CustomIoUCELoss())
         val_loss.append(eval['loss'])
         val_dice.append(eval['accuracy'])
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, took: {time.time()-start:.4f} seconds,with eval Loss Eval: {eval['loss']}")
@@ -269,8 +286,8 @@ def main():
     image_dir = './Train_Pre_3class/images'
     label_dir = './Train_Pre_3class/labels'
 
-    image_dir_test = './Test_Pre_3class/images'
-    label_dir_test = './Test_Pre_3class/labels'
+    image_dir_test = './Validation_Pre_3class/images'
+    label_dir_test = './Validation_Pre_3class/labels'
     if not os.path.exists("./plots"):
         os.makedirs("./plots")
     if not os.path.exists("./models"):
@@ -361,7 +378,9 @@ def main():
                  ,data_loader_test=data_loader_test, num_epochs=num_epochs,model_name=name,pretrained = pretrained,scheduler=scheduler)
     else:
         #model.load_state_dict(torch.load(f'./models/{name}.pth'))
-        model.load_state_dict(torch.load('models/UNETV2-validation-001-sgd-50-8-256_best_checkpoint.pth'))
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f"Total number of parameters: {total_params}")
+        model.load_state_dict(torch.load('models/UNETV2-validation-00001-adam-100-8-256_best_checkpoint_4L_FIX.pth'))
         print(evaluate(model, data_loader_test, device,simple=False,plot=True,pretrained=pretrained,save_dir='visualizations/'))
 
 
